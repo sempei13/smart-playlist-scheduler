@@ -152,6 +152,9 @@
 <dialog id="dlg">
   <form method="dialog" id="form">
     <h3 id="dlg_title"></h3>
+    <label>Image or video
+      <select id="f_file"></select>
+    </label>
     <div class="preview" id="dlg_preview"></div>
     <div class="seg" id="kind">
       <button type="button" data-kind="once">One time</button>
@@ -308,13 +311,23 @@ function setKind(k) {
   $("once_fields").style.display = k === "once" ? "" : "none";
   $("weekly_fields").style.display = k === "weekly" ? "grid" : "none";
 }
-function openDialog(filename, existing, where) {
-  editing = existing || null;
-  $("dlg_title").textContent = (existing ? "Edit schedule: " : "Schedule: ") + filename;
-  $("dlg_title").dataset.file = filename;
-  const w = where || (S.live_files.includes(filename) ? "live" : "library");
-  $("dlg_preview").innerHTML = IMAGE.test(filename) ? `<img src="${mediaUrl(filename, w)}" alt="">`
+function showPreview(filename) {
+  const w = S.live_files.includes(filename) ? "live" : "library";
+  const missing = !S.live_files.includes(filename) && !S.library_files.includes(filename);
+  $("dlg_preview").innerHTML = missing ? "" : IMAGE.test(filename) ? `<img src="${mediaUrl(filename, w)}" alt="">`
     : VIDEO.test(filename) ? `<video controls muted src="${mediaUrl(filename, w)}"></video>` : "";
+}
+function openDialog(filename, existing) {
+  editing = existing || null;
+  $("dlg_title").textContent = existing ? "Edit schedule" : "New schedule";
+  const opt = f => `<option value="${esc(f)}">${esc(f)}</option>`;
+  const missing = !S.library_files.includes(filename) && !S.live_files.includes(filename);
+  $("f_file").innerHTML =
+    (missing ? `<option value="${esc(filename)}">${esc(filename)} (file not found)</option>` : "") +
+    (S.library_files.length ? `<optgroup label="Library">${S.library_files.map(opt).join("")}</optgroup>` : "") +
+    (S.live_files.length ? `<optgroup label="In the playlist now">${S.live_files.map(opt).join("")}</optgroup>` : "");
+  $("f_file").value = filename;
+  showPreview(filename);
   $("f_error").textContent = "";
   $("f_note").value = existing?.note || "";
   const start = new Date(); start.setDate(start.getDate() + 1); start.setHours(8, 0, 0, 0);
@@ -334,7 +347,7 @@ document.addEventListener("click", async e => {
     if (t.dataset.choose) { t.disabled = true; t.textContent = "Choosing…";
       try { render(await api("/api/choose-folder", {which: t.dataset.choose})); }
       finally { t.disabled = false; t.textContent = "Choose…"; } }
-    else if (t.classList.contains("tile")) openDialog(t.dataset.file, null, t.dataset.where);
+    else if (t.classList.contains("tile")) openDialog(t.dataset.file, null);
     else if (t.dataset.kind) setKind(t.dataset.kind);
     else if (t.dataset.day !== undefined) {
       const set = t.closest("#f_days") ? formDays : quietDays, d = +t.dataset.day;
@@ -363,7 +376,7 @@ document.addEventListener("click", async e => {
       quiet_hours_enabled: $("quiet_enabled").checked, quiet_start: $("quiet_start").value,
       quiet_end: $("quiet_end").value, quiet_days: [...quietDays]}));
     else if (t.id === "save") {
-      const body = {id: editing?.id, filename: $("dlg_title").dataset.file, kind, note: $("f_note").value,
+      const body = {id: editing?.id, filename: $("f_file").value, kind, note: $("f_note").value,
         enabled: editing ? editing.enabled : true};
       if (kind === "once") Object.assign(body, {start: $("f_start").value, end: $("f_end").value});
       else Object.assign(body, {days: [...formDays], start_time: $("f_start_time").value, end_time: $("f_end_time").value});
@@ -372,6 +385,8 @@ document.addEventListener("click", async e => {
     }
   } catch (err) { alert(err.message); }
 });
+
+$("f_file").addEventListener("change", e => showPreview(e.target.value));
 
 function tick() { $("clock").textContent = new Date().toLocaleString([], {weekday:"long", month:"short", day:"numeric", hour:"numeric", minute:"2-digit"}); }
 tick(); setInterval(tick, 10000);

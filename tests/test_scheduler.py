@@ -116,6 +116,34 @@ class MoveTests(unittest.TestCase):
         sch.reconcile(self.store, SUN_9AM)  # test over, but weekly schedule now active
         self.assertTrue((self.live / "promo.mp4").exists())
 
+    def test_switching_schedule_to_another_file(self):
+        sch.reconcile(self.store, SUN_9AM)
+        self.assertTrue((self.live / "promo.mp4").exists())
+        self.store.data["schedules"][0]["filename"] = "untouched.jpg"  # edit: change the media
+        sch.reconcile(self.store, datetime(2026, 11, 15, 9, 1))
+        self.assertTrue((self.lib / "promo.mp4").exists())       # old file goes back
+        self.assertTrue((self.live / "untouched.jpg").exists())  # new file goes in
+        self.assertEqual(self.store.data["placed"], ["untouched.jpg"])
+
+    def test_deleting_schedule_returns_file(self):
+        sch.reconcile(self.store, SUN_9AM)
+        self.store.data["schedules"] = []
+        sch.reconcile(self.store, datetime(2026, 11, 15, 9, 1))
+        self.assertTrue((self.lib / "promo.mp4").exists())
+        self.assertEqual(self.store.data["placed"], [])
+
+    def test_manual_files_in_live_are_left_alone(self):
+        (self.live / "manual.png").write_text("x")
+        sch.reconcile(self.store, SUN_9AM)
+        sch.reconcile(self.store, datetime(2026, 11, 15, 14, 0))
+        self.assertTrue((self.live / "manual.png").exists())
+
+    def test_upgrade_adopts_scheduled_files_already_live(self):
+        sch.reconcile(self.store, SUN_9AM)
+        del self.store.data["placed"]  # simulate data saved by the older version
+        sch.reconcile(self.store, datetime(2026, 11, 15, 9, 1))
+        self.assertEqual(self.store.data["placed"], ["promo.mp4"])
+
     def test_test_rejects_unknown_file(self):
         with self.assertRaises(ValueError):
             sch.start_test(self.store, "nope.mp4", 30, now=SUN_9AM)

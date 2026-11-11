@@ -148,6 +148,8 @@ class Store:
             self.data["settings"].update(loaded.get("settings", {}))
             self.data["schedules"] = loaded.get("schedules", [])
             self.data["tests"] = loaded.get("tests", {})  # so a restart mid-test still ends it
+            if "placed" in loaded:
+                self.data["placed"] = loaded["placed"]
             self.data["log"] = loaded.get("log", [])
 
     def save(self):
@@ -200,9 +202,26 @@ def reconcile(store: Store, now: datetime | None = None) -> list[str]:
             else:
                 should_be_live.setdefault(name, False)
 
+        # Files this app put in the playlist. If nothing wants them there any more (their schedule
+        # was deleted or switched to a different file), they go back to the Library.
+        if "placed" not in store.data:  # first run after upgrading: assume scheduled files in Live are ours
+            live_now = set(list_media(live))
+            store.data["placed"] = sorted(n for n in should_be_live if n in live_now)
+        placed = set(store.data["placed"])
+        for name in placed:
+            should_be_live.setdefault(name, False)
+
+        def set_placed(name: str, is_placed: bool):
+            if (name in placed) != is_placed:
+                placed.add(name) if is_placed else placed.discard(name)
+                store.data["placed"] = sorted(placed)
+                store.save()
+
         for name, want_live in should_be_live.items():
             if quiet and name not in tests:
                 continue
+            if not want_live and not os.path.exists(os.path.join(live, name)):
+                set_placed(name, False)  # already back (or removed by hand)
             if name in ended_tests:
                 del tests[name]
                 store.save()
@@ -221,6 +240,7 @@ def reconcile(store: Store, now: datetime | None = None) -> list[str]:
             except OSError as exc:
                 store.log(f"Couldn't move “{name}”: {exc}", "error")
                 continue
+            set_placed(name, want_live)
             msg = (f"Added “{name}” to the playlist" if want_live
                    else f"Removed “{name}” from the playlist")
             store.log(msg)

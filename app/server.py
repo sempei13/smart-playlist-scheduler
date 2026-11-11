@@ -190,11 +190,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": str(exc)}, 400)
             with store.lock:
                 existing = [i for i, s in enumerate(store.data["schedules"]) if s["id"] == schedule["id"]]
+                old_name = store.data["schedules"][existing[0]]["filename"] if existing else None
+                settings = store.data["settings"]
+                available = (sch.list_media(settings["library_folder"])
+                             + sch.list_media(settings["live_folder"]))
+                if schedule["filename"] != old_name and schedule["filename"] not in available:
+                    return self._json({"error": "That file isn't in the Library folder any more."}, 400)
                 if existing:
                     store.data["schedules"][existing[0]] = schedule
                 else:
                     store.data["schedules"].append(schedule)
                 store.save()
+            if old_name and old_name != schedule["filename"]:
+                store.log(f"Schedule switched from “{old_name}” to “{schedule['filename']}”")
             store.log(f"Saved schedule for “{schedule['filename']}”: {sch.describe(schedule)}")
             sch.reconcile(store)
             return self._json(state())
