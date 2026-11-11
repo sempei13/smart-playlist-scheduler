@@ -36,6 +36,8 @@
   button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text);
     padding: 7px 14px; border-radius: 8px; cursor: pointer; }
   button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:disabled:hover { border-color: var(--line); }
   button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
   button.small { padding: 4px 10px; font-size: 13px; }
   button.danger:hover { border-color: var(--err); color: var(--err); }
@@ -176,10 +178,41 @@
   </form>
 </dialog>
 
+<dialog id="test_dlg">
+  <form method="dialog">
+    <h3 id="test_title"></h3>
+    <div>This puts the file in the Smart Playlist folder <strong>right now</strong>, then takes it back out.
+      Use it to check that it shows up in ProPresenter. Its schedules aren’t changed.</div>
+    <label>Keep it in the playlist for
+      <select id="test_seconds">
+        <option value="15">15 seconds</option>
+        <option value="30" selected>30 seconds</option>
+        <option value="60">1 minute</option>
+        <option value="300">5 minutes</option>
+      </select>
+    </label>
+    <div style="color:var(--muted); font-size:13px">Tests run even during quiet hours, so avoid them while ProPresenter is live.</div>
+    <div class="error-msg" id="test_error"></div>
+    <div class="footer">
+      <button type="button" id="test_cancel">Cancel</button>
+      <button type="button" class="primary" id="test_go">Start test</button>
+    </div>
+  </form>
+</dialog>
+
 <script>
 const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const VIDEO = /\.(mov|mp4|m4v|webm)$/i, IMAGE = /\.(jpe?g|png|gif|bmp|webp)$/i;
 let S = null, editing = null, kind = "once", formDays = new Set(), quietDays = new Set();
+let testsReceivedAt = Date.now();
+
+function updateCountdowns() {
+  const elapsed = Math.floor((Date.now() - testsReceivedAt) / 1000);
+  document.querySelectorAll("[data-countdown]").forEach(el => {
+    const left = Math.max(0, ((S && S.tests) || {})[el.dataset.countdown] - elapsed);
+    el.textContent = left > 0 ? `back out in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "taking it back out…";
+  });
+}
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
@@ -231,7 +264,9 @@ function render(state) {
     <tr><th>File</th><th>When</th><th>Status</th><th></th></tr>
     ${rows.map(s => {
       let pill;
-      if (s.location === "missing") pill = '<span class="pill err">File not found</span>';
+      const testing = s.filename in (S.tests || {});
+      if (testing) pill = `<span class="pill live">Testing · <span data-countdown="${esc(s.filename)}"></span></span>`;
+      else if (s.location === "missing") pill = '<span class="pill err">File not found</span>';
       else if (!s.enabled) pill = '<span class="pill">Paused</span>';
       else if (s.expired) pill = '<span class="pill">Finished</span>';
       else if (s.location === "live") pill = '<span class="pill live">In playlist</span>';
@@ -241,12 +276,17 @@ function render(state) {
         <td><strong>${esc(s.filename)}</strong>${s.note ? `<div style="color:var(--muted);font-size:13px">${esc(s.note)}</div>` : ""}</td>
         <td>${esc(s.description)}</td><td>${pill}</td>
         <td class="actions">
+          ${testing ? `<button class="small" data-stoptest="${esc(s.filename)}">End test</button>`
+            : `<button class="small" data-test="${esc(s.filename)}" ${s.location === "library" ? "" :
+                `disabled title="${s.location === "live" ? "Already in the playlist" : "File not found"}"`}>Test</button>`}
           <button class="small" data-edit="${s.id}">Edit</button>
           <button class="small" data-toggle="${s.id}">${s.enabled ? "Pause" : "Resume"}</button>
           <button class="small danger" data-del="${s.id}">Delete</button>
         </td></tr>`;
     }).join("")}</table>`
     : `<div class="empty-note">No schedules yet. Click a file in the Library below to add one.</div>`;
+
+  testsReceivedAt = Date.now(); updateCountdowns();
 
   $("log").innerHTML = S.log.length ? S.log.map(l => `<div class="${l.level}">
       <time>${new Date(l.time).toLocaleString([], {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"})}</time>
@@ -301,6 +341,20 @@ document.addEventListener("click", async e => {
       set.has(d) ? set.delete(d) : set.add(d); t.classList.toggle("on", set.has(d));
     }
     else if (t.dataset.edit) { const s = S.schedules.find(x => x.id === t.dataset.edit); openDialog(s.filename, s); }
+    else if (t.dataset.test) {
+      $("test_title").textContent = `Test: ${t.dataset.test}`;
+      $("test_title").dataset.file = t.dataset.test;
+      $("test_error").textContent = "";
+      $("test_dlg").showModal();
+    }
+    else if (t.id === "test_cancel") $("test_dlg").close();
+    else if (t.id === "test_go") {
+      try {
+        render(await api("/api/test", {filename: $("test_title").dataset.file, seconds: +$("test_seconds").value}));
+        $("test_dlg").close();
+      } catch (err) { $("test_error").textContent = err.message; }
+    }
+    else if (t.dataset.stoptest) render(await api("/api/test/stop", {filename: t.dataset.stoptest}));
     else if (t.dataset.toggle) render(await api("/api/schedules/toggle", {id: t.dataset.toggle}));
     else if (t.dataset.del) { if (confirm("Delete this schedule? (The file itself isn’t deleted.)")) render(await api("/api/schedules/delete", {id: t.dataset.del})); }
     else if (t.id === "cancel") $("dlg").close();
@@ -321,7 +375,15 @@ document.addEventListener("click", async e => {
 
 function tick() { $("clock").textContent = new Date().toLocaleString([], {weekday:"long", month:"short", day:"numeric", hour:"numeric", minute:"2-digit"}); }
 tick(); setInterval(tick, 10000);
-refresh(); setInterval(() => { if (!$("dlg").open) refresh(); }, 15000);
+setInterval(updateCountdowns, 1000);
+// Check every 15 seconds normally, and every 2 seconds while a test is running.
+let lastRefresh = 0;
+setInterval(() => {
+  const testing = S && S.tests && Object.keys(S.tests).length > 0;
+  if ($("dlg").open || $("test_dlg").open) return;
+  if (Date.now() - lastRefresh >= (testing ? 2000 : 15000)) { lastRefresh = Date.now(); refresh(); }
+}, 1000);
+refresh();
 </script>
 </body>
 </html>

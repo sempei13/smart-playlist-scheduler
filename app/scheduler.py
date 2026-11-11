@@ -142,11 +142,12 @@ class Store:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.path = data_dir / "data.json"
         self.lock = threading.RLock()
-        self.data = {"settings": dict(DEFAULT_SETTINGS), "schedules": [], "log": []}
+        self.data = {"settings": dict(DEFAULT_SETTINGS), "schedules": [], "tests": {}, "log": []}
         if self.path.exists():
             loaded = json.loads(self.path.read_text())
             self.data["settings"].update(loaded.get("settings", {}))
             self.data["schedules"] = loaded.get("schedules", [])
+            self.data["tests"] = loaded.get("tests", {})  # so a restart mid-test still ends it
             self.data["log"] = loaded.get("log", [])
 
     def save(self):
@@ -182,15 +183,29 @@ def reconcile(store: Store, now: datetime | None = None) -> list[str]:
             return actions
         if os.path.realpath(library) == os.path.realpath(live):
             return actions
-        if in_quiet_hours(settings, now):
-            return actions
+        quiet = in_quiet_hours(settings, now)
 
         should_be_live: dict[str, bool] = {}
         for sched in store.data["schedules"]:
             name = sched["filename"]
             should_be_live[name] = should_be_live.get(name, False) or schedule_active(sched, now)
 
+        # Tests (the "Test" button) put a file in the playlist briefly, then take it back
+        # out. They were started by a person on purpose, so quiet hours don't block them.
+        tests = store.data.setdefault("tests", {})
+        ended_tests = [n for n, until in tests.items() if _parse_dt(until) <= now]
+        for name in tests:
+            if name not in ended_tests:
+                should_be_live[name] = True
+            else:
+                should_be_live.setdefault(name, False)
+
         for name, want_live in should_be_live.items():
+            if quiet and name not in tests:
+                continue
+            if name in ended_tests:
+                del tests[name]
+                store.save()
             src_dir, dst_dir = (library, live) if want_live else (live, library)
             src, dst = os.path.join(src_dir, name), os.path.join(dst_dir, name)
             if not os.path.exists(src):
@@ -211,6 +226,39 @@ def reconcile(store: Store, now: datetime | None = None) -> list[str]:
             store.log(msg)
             actions.append(msg)
     return actions
+
+
+def start_test(store: Store, filename: str, seconds: int, now: datetime | None = None):
+    """Put `filename` in the playlist now and take it back out after `seconds`."""
+    now = now or datetime.now()
+    seconds = max(5, min(int(seconds), 3600))
+    with store.lock:
+        if filename not in list_media(store.data["settings"]["library_folder"]) + \
+                list_media(store.data["settings"]["live_folder"]):
+            raise ValueError(f"“{filename}” isn't in the Library folder.")
+        until = now + timedelta(seconds=seconds)
+        store.data.setdefault("tests", {})[filename] = until.isoformat(timespec="seconds")
+        store.save()
+    store.log(f"Test started: “{filename}” goes into the playlist for {seconds} seconds")
+    reconcile(store, now)
+
+
+def stop_test(store: Store, filename: str, now: datetime | None = None):
+    now = now or datetime.now()
+    with store.lock:
+        tests = store.data.setdefault("tests", {})
+        if filename not in tests:
+            return
+        tests[filename] = now.isoformat(timespec="seconds")
+        store.save()
+    store.log(f"Test ended early for “{filename}”")
+    reconcile(store, now)
+
+
+def test_seconds_left(store: Store, now: datetime | None = None) -> dict[str, int]:
+    now = now or datetime.now()
+    return {name: max(0, int((_parse_dt(until) - now).total_seconds()))
+            for name, until in store.data.get("tests", {}).items()}
 
 
 def cleanup_expired(store: Store, now: datetime | None = None, keep_days: int = 7):

@@ -37,6 +37,9 @@ and moves them back out when the time is up. You set everything up by pointing a
 
 ## Tips
 
+- Click **Test** on any schedule to put that file in the playlist **right now** for 15 seconds to 5 minutes,
+  then take it back out automatically, so you can confirm it shows up in ProPresenter without waiting.
+  **End test** takes it out early. Tests don't change the schedule, and they run even during quiet hours.
 - Use **Quiet hours** (under Folders) to block changes while ProPresenter is live, so a file is never
   pulled out of the playlist while it's on screen.
 - Deleting a schedule doesn't delete the file. If the file was in the playlist, it goes back to the Library.

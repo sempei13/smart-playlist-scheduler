@@ -91,6 +91,35 @@ class MoveTests(unittest.TestCase):
         sch.reconcile(self.store, datetime(2026, 11, 15, 14, 0))  # weekly ended, once still active
         self.assertTrue((self.live / "promo.mp4").exists())
 
+    def test_test_button_moves_in_then_back(self):
+        tue = datetime(2026, 11, 17, 10, 0)  # no schedule active
+        sch.start_test(self.store, "promo.mp4", 30, now=tue)
+        self.assertTrue((self.live / "promo.mp4").exists())
+        self.assertIn("promo.mp4", sch.test_seconds_left(self.store, tue))
+        sch.reconcile(self.store, datetime(2026, 11, 17, 10, 0, 20))  # still testing
+        self.assertTrue((self.live / "promo.mp4").exists())
+        sch.reconcile(self.store, datetime(2026, 11, 17, 10, 0, 31))  # test over
+        self.assertTrue((self.lib / "promo.mp4").exists())
+        self.assertEqual(self.store.data["tests"], {})
+
+    def test_test_works_on_unscheduled_file_and_during_quiet_hours(self):
+        self.store.data["settings"].update(quiet_hours_enabled=True, quiet_days=[6],
+                                           quiet_start="08:00", quiet_end="12:00")
+        sch.start_test(self.store, "untouched.jpg", 15, now=SUN_9AM)
+        self.assertTrue((self.live / "untouched.jpg").exists())
+        self.assertFalse((self.live / "promo.mp4").exists())  # quiet hours still block schedules
+        sch.stop_test(self.store, "untouched.jpg", now=datetime(2026, 11, 15, 9, 0, 5))
+        self.assertTrue((self.lib / "untouched.jpg").exists())
+
+    def test_test_ending_leaves_file_if_schedule_active(self):
+        sch.start_test(self.store, "promo.mp4", 15, now=datetime(2026, 11, 15, 7, 59, 50))
+        sch.reconcile(self.store, SUN_9AM)  # test over, but weekly schedule now active
+        self.assertTrue((self.live / "promo.mp4").exists())
+
+    def test_test_rejects_unknown_file(self):
+        with self.assertRaises(ValueError):
+            sch.start_test(self.store, "nope.mp4", 30, now=SUN_9AM)
+
 
 if __name__ == "__main__":
     unittest.main()

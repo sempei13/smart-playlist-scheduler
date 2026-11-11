@@ -53,6 +53,7 @@ def state() -> dict:
             "library_files": lib_files,
             "live_files": live_files,
             "schedules": schedules,
+            "tests": sch.test_seconds_left(store, now),
             "log": store.data["log"][:100],
         }
 
@@ -216,6 +217,20 @@ class Handler(BaseHTTPRequestHandler):
                         s["enabled"] = not s.get("enabled", True)
                 store.save()
             sch.reconcile(store)
+            return self._json(state())
+
+        if url.path == "/api/test":
+            name, seconds = str(data.get("filename", "")), data.get("seconds", 30)
+            try:
+                sch.start_test(store, name, int(seconds))
+            except (ValueError, TypeError) as exc:
+                return self._json({"error": str(exc) or "Couldn't start the test."}, 400)
+            # end the test right on time instead of waiting for the next 30-second check
+            threading.Timer(max(5, min(int(seconds), 3600)) + 0.5, sch.reconcile, args=(store,)).start()
+            return self._json(state())
+
+        if url.path == "/api/test/stop":
+            sch.stop_test(store, str(data.get("filename", "")))
             return self._json(state())
 
         if url.path == "/api/run-now":
