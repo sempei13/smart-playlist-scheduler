@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Playlist Scheduler</title>
+<style>
+  :root {
+    --bg: #f5f5f7; --card: #ffffff; --text: #1d1d1f; --muted: #6e6e73; --line: #e3e3e8;
+    --accent: #0a66d8; --accent-text: #fff; --live: #1f9d55; --live-bg: #e7f6ee;
+    --warn: #b25e00; --warn-bg: #fff4e5; --err: #c42b1c; --err-bg: #fdecea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161618; --card: #232326; --text: #f2f2f4; --muted: #a1a1a8; --line: #3a3a3f;
+      --accent: #3d8bff; --live: #4cc38a; --live-bg: #183a29;
+      --warn: #ffb35c; --warn-bg: #3d2a12; --err: #ff6b5e; --err-bg: #3d1b18;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { padding: 18px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    border-bottom: 1px solid var(--line); background: var(--card); }
+  header h1 { font-size: 19px; margin: 0; }
+  header .clock { color: var(--muted); margin-left: auto; font-variant-numeric: tabular-nums; }
+  main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 60px; display: grid; gap: 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+  .card h2 { font-size: 16px; margin: 0 0 12px; display: flex; align-items: center; gap: 10px; }
+  .card h2 .sub { font-weight: 400; color: var(--muted); font-size: 13px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .folder { display: grid; grid-template-columns: 170px 1fr auto; gap: 10px; align-items: center; margin-bottom: 10px; }
+  .path { font-family: ui-monospace, Menlo, monospace; font-size: 13px; padding: 7px 10px; border-radius: 8px;
+    background: var(--bg); border: 1px solid var(--line); overflow-wrap: anywhere; min-height: 34px; }
+  .path.empty { color: var(--muted); font-family: inherit; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text);
+    padding: 7px 14px; border-radius: 8px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.small { padding: 4px 10px; font-size: 13px; }
+  button.danger:hover { border-color: var(--err); color: var(--err); }
+  .banner { padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; }
+  .banner.warn { background: var(--warn-bg); color: var(--warn); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .tile { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; cursor: pointer;
+    background: var(--bg); text-align: left; padding: 0; display: flex; flex-direction: column; }
+  .tile:hover { border-color: var(--accent); }
+  .thumb { aspect-ratio: 16/9; background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .thumb img, .thumb video { width: 100%; height: 100%; object-fit: cover; }
+  .tile .name { padding: 7px 9px 2px; font-size: 13px; overflow-wrap: anywhere; }
+  .tile .meta { padding: 0 9px 8px; font-size: 12px; color: var(--muted); }
+  .pill { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--bg);
+    color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
+  .pill.live { background: var(--live-bg); color: var(--live); border-color: transparent; }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+  .pill.err { background: var(--err-bg); color: var(--err); border-color: transparent; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+  td.actions { white-space: nowrap; text-align: right; }
+  tr.disabled td:not(.actions) { opacity: .5; }
+  .empty-note { color: var(--muted); padding: 8px 0; }
+  .log { max-height: 280px; overflow: auto; font-size: 13px; }
+  .log div { padding: 5px 0; border-bottom: 1px solid var(--line); display: flex; gap: 12px; }
+  .log time { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .log .error { color: var(--err); }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 800px) { .cols { grid-template-columns: 1fr; } .folder { grid-template-columns: 1fr; } }
+  /* dialog */
+  dialog { border: none; border-radius: 14px; padding: 0; width: min(520px, calc(100vw - 32px));
+    background: var(--card); color: var(--text); box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+  dialog::backdrop { background: rgba(0,0,0,.4); }
+  dialog form { padding: 20px 22px; display: grid; gap: 14px; }
+  dialog h3 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
+  label { font-size: 13px; color: var(--muted); display: grid; gap: 4px; }
+  input, select { font: inherit; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+  .seg button { border: none; border-radius: 0; padding: 7px 16px; }
+  .seg button.on { background: var(--accent); color: var(--accent-text); }
+  .days { display: flex; gap: 6px; flex-wrap: wrap; }
+  .days button { min-width: 48px; padding: 6px 8px; }
+  .days button.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .error-msg { color: var(--err); font-size: 14px; min-height: 1em; }
+  .footer { display: flex; justify-content: flex-end; gap: 10px; }
+  .preview { max-height: 200px; border-radius: 8px; overflow: hidden; background: #000; display: flex; justify-content: center; }
+  .preview img, .preview video { max-height: 200px; max-width: 100%; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Smart Playlist Scheduler</h1>
+  <span id="status" class="pill">Loading…</span>
+  <span class="clock" id="clock"></span>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Folders</h2>
+    <div class="folder">
+      <strong>Media library</strong>
+      <div class="path" id="library_folder"></div>
+      <button data-choose="library_folder">Choose…</button>
+    </div>
+    <div class="folder">
+      <strong>Smart Playlist folder</strong>
+      <div class="path" id="live_folder"></div>
+      <button data-choose="live_folder">Choose…</button>
+    </div>
+    <details>
+      <summary style="cursor:pointer">Quiet hours (no files move during these times)</summary>
+      <div style="padding-top:12px; display:grid; gap:10px">
+        <label style="flex-direction:row; display:flex; gap:8px; align-items:center; color:var(--text)">
+          <input type="checkbox" id="quiet_enabled"> Don’t change the playlist during:
+        </label>
+        <div class="days" id="quiet_days"></div>
+        <div class="row">
+          <label>From <input type="time" id="quiet_start"></label>
+          <label>Until <input type="time" id="quiet_end"></label>
+          <button class="small" id="save_quiet" style="align-self:end">Save quiet hours</button>
+        </div>
+        <div style="color:var(--muted); font-size:13px">Moves that come due during quiet hours happen as soon as quiet hours end.</div>
+      </div>
+    </details>
+  </section>
+
+  <section class="card">
+    <h2>Schedules <span class="sub">files go into the playlist at the start time and back to the library at the end</span></h2>
+    <div id="schedules"></div>
+  </section>
+
+  <div class="cols">
+    <section class="card">
+      <h2>Library <span class="sub">click a file to schedule it</span></h2>
+      <div id="library" class="grid"></div>
+    </section>
+    <section class="card">
+      <h2>In the playlist now <span class="sub">the Smart Playlist folder</span></h2>
+      <div id="live" class="grid"></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Activity <button class="small" id="run_now" style="margin-left:auto">Check now</button></h2>
+    <div class="log" id="log"></div>
+  </section>
+</main>
+
+<dialog id="dlg">
+  <form method="dialog" id="form">
+    <h3 id="dlg_title"></h3>
+    <div class="preview" id="dlg_preview"></div>
+    <div class="seg" id="kind">
+      <button type="button" data-kind="once">One time</button>
+      <button type="button" data-kind="weekly">Every week</button>
+    </div>
+    <div id="once_fields" class="two">
+      <label>Add to playlist<input type="datetime-local" id="f_start"></label>
+      <label>Take back out<input type="datetime-local" id="f_end"></label>
+    </div>
+    <div id="weekly_fields" style="display:grid; gap:12px">
+      <div class="days" id="f_days"></div>
+      <div class="two">
+        <label>Add to playlist at<input type="time" id="f_start_time"></label>
+        <label>Take back out at<input type="time" id="f_end_time"></label>
+      </div>
+      <div style="color:var(--muted); font-size:13px">If the “out” time is earlier than the “in” time, it comes out the next day.</div>
+    </div>
+    <label>Note (optional)<input type="text" id="f_note" maxlength="200" placeholder="e.g. Fall Festival promo"></label>
+    <div class="error-msg" id="f_error"></div>
+    <div class="footer">
+      <button type="button" id="cancel">Cancel</button>
+      <button type="button" class="primary" id="save">Save schedule</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+const VIDEO = /\.(mov|mp4|m4v|webm)$/i, IMAGE = /\.(jpe?g|png|gif|bmp|webp)$/i;
+let S = null, editing = null, kind = "once", formDays = new Set(), quietDays = new Set();
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} :
+    {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const data = await r.json().catch(() => ({error: "Something went wrong."}));
+  if (!r.ok) throw new Error(data.error || "Something went wrong.");
+  return data;
+}
+
+function mediaUrl(name, where) { return `/media?where=${where}&name=${encodeURIComponent(name)}`; }
+function thumb(name, where) {
+  if (IMAGE.test(name)) return `<img loading="lazy" src="${mediaUrl(name, where)}" alt="">`;
+  if (VIDEO.test(name)) return `<video preload="metadata" muted src="${mediaUrl(name, where)}#t=1"></video>`;
+  return `<span style="color:#aaa">${esc(name.split(".").pop().toUpperCase())}</span>`;
+}
+
+function render(state) {
+  S = state;
+  const st = S.settings;
+  for (const k of ["library_folder", "live_folder"]) {
+    const el = $(k); el.textContent = st[k] || "Not chosen yet"; el.classList.toggle("empty", !st[k]);
+  }
+  const status = $("status");
+  if (!S.folders_ok) { status.className = "pill warn"; status.textContent = "Choose both folders to start"; }
+  else if (S.quiet_now) { status.className = "pill warn"; status.textContent = "Quiet hours — paused"; }
+  else { status.className = "pill live"; status.textContent = "Running"; }
+
+  // quiet hours (don't clobber while the user is editing)
+  if (!document.activeElement || !document.activeElement.closest("details")) {
+    $("quiet_enabled").checked = st.quiet_hours_enabled;
+    $("quiet_start").value = st.quiet_start; $("quiet_end").value = st.quiet_end;
+    quietDays = new Set(st.quiet_days); renderDays($("quiet_days"), quietDays);
+  }
+
+  const scheduled = new Set(S.schedules.map(s => s.filename));
+  const tiles = (files, where) => files.length ? files.map(f => `
+    <button class="tile" data-file="${esc(f)}" data-where="${where}">
+      <div class="thumb">${thumb(f, where)}</div>
+      <div class="name">${esc(f)}</div>
+      <div class="meta">${scheduled.has(f) ? '<span class="pill">Scheduled</span>' : where === "live" ? "Not scheduled" : "Click to schedule"}</div>
+    </button>`).join("") : `<div class="empty-note">${S.folders_ok ? "No images or videos here." : "Choose the folder above."}</div>`;
+  $("library").innerHTML = tiles(S.library_files, "library");
+  $("live").innerHTML = tiles(S.live_files, "live");
+
+  const rows = [...S.schedules].sort((a, b) => a.filename.localeCompare(b.filename));
+  $("schedules").innerHTML = rows.length ? `<table>
+    <tr><th>File</th><th>When</th><th>Status</th><th></th></tr>
+    ${rows.map(s => {
+      let pill;
+      if (s.location === "missing") pill = '<span class="pill err">File not found</span>';
+      else if (!s.enabled) pill = '<span class="pill">Paused</span>';
+      else if (s.expired) pill = '<span class="pill">Finished</span>';
+      else if (s.location === "live") pill = '<span class="pill live">In playlist</span>';
+      else if (s.active) pill = '<span class="pill warn">Waiting to add</span>';
+      else pill = '<span class="pill">Waiting</span>';
+      return `<tr class="${s.enabled ? "" : "disabled"}">
+        <td><strong>${esc(s.filename)}</strong>${s.note ? `<div style="color:var(--muted);font-size:13px">${esc(s.note)}</div>` : ""}</td>
+        <td>${esc(s.description)}</td><td>${pill}</td>
+        <td class="actions">
+          <button class="small" data-edit="${s.id}">Edit</button>
+          <button class="small" data-toggle="${s.id}">${s.enabled ? "Pause" : "Resume"}</button>
+          <button class="small danger" data-del="${s.id}">Delete</button>
+        </td></tr>`;
+    }).join("")}</table>`
+    : `<div class="empty-note">No schedules yet. Click a file in the Library below to add one.</div>`;
+
+  $("log").innerHTML = S.log.length ? S.log.map(l => `<div class="${l.level}">
+      <time>${new Date(l.time).toLocaleString([], {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"})}</time>
+      <span>${esc(l.message)}</span></div>`).join("") : `<div class="empty-note">Nothing yet.</div>`;
+}
+
+function renderDays(container, set) {
+  container.innerHTML = DAYS.map((d, i) => `<button type="button" data-day="${i}" class="${set.has(i) ? "on" : ""}">${d}</button>`).join("");
+}
+
+async function refresh() { try { render(await api("/api/state")); } catch (e) { $("status").className = "pill err"; $("status").textContent = "App not responding"; } }
+
+// ---- schedule dialog ----
+function pad(n) { return String(n).padStart(2, "0"); }
+function localInput(d) { return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+function setKind(k) {
+  kind = k;
+  document.querySelectorAll("#kind button").forEach(b => b.classList.toggle("on", b.dataset.kind === k));
+  $("once_fields").style.display = k === "once" ? "" : "none";
+  $("weekly_fields").style.display = k === "weekly" ? "grid" : "none";
+}
+function openDialog(filename, existing, where) {
+  editing = existing || null;
+  $("dlg_title").textContent = (existing ? "Edit schedule: " : "Schedule: ") + filename;
+  $("dlg_title").dataset.file = filename;
+  const w = where || (S.live_files.includes(filename) ? "live" : "library");
+  $("dlg_preview").innerHTML = IMAGE.test(filename) ? `<img src="${mediaUrl(filename, w)}" alt="">`
+    : VIDEO.test(filename) ? `<video controls muted src="${mediaUrl(filename, w)}"></video>` : "";
+  $("f_error").textContent = "";
+  $("f_note").value = existing?.note || "";
+  const start = new Date(); start.setDate(start.getDate() + 1); start.setHours(8, 0, 0, 0);
+  const end = new Date(start); end.setHours(13);
+  $("f_start").value = existing?.start || localInput(start);
+  $("f_end").value = existing?.end || localInput(end);
+  $("f_start_time").value = existing?.start_time || "08:00";
+  $("f_end_time").value = existing?.end_time || "13:00";
+  formDays = new Set(existing?.days || [6]); renderDays($("f_days"), formDays);
+  setKind(existing?.kind || "once");
+  $("dlg").showModal();
+}
+
+document.addEventListener("click", async e => {
+  const t = e.target.closest("button"); if (!t) return;
+  try {
+    if (t.dataset.choose) { t.disabled = true; t.textContent = "Choosing…";
+      try { render(await api("/api/choose-folder", {which: t.dataset.choose})); }
+      finally { t.disabled = false; t.textContent = "Choose…"; } }
+    else if (t.classList.contains("tile")) openDialog(t.dataset.file, null, t.dataset.where);
+    else if (t.dataset.kind) setKind(t.dataset.kind);
+    else if (t.dataset.day !== undefined) {
+      const set = t.closest("#f_days") ? formDays : quietDays, d = +t.dataset.day;
+      set.has(d) ? set.delete(d) : set.add(d); t.classList.toggle("on", set.has(d));
+    }
+    else if (t.dataset.edit) { const s = S.schedules.find(x => x.id === t.dataset.edit); openDialog(s.filename, s); }
+    else if (t.dataset.toggle) render(await api("/api/schedules/toggle", {id: t.dataset.toggle}));
+    else if (t.dataset.del) { if (confirm("Delete this schedule? (The file itself isn’t deleted.)")) render(await api("/api/schedules/delete", {id: t.dataset.del})); }
+    else if (t.id === "cancel") $("dlg").close();
+    else if (t.id === "run_now") render(await api("/api/run-now", {}));
+    else if (t.id === "save_quiet") render(await api("/api/settings", {
+      quiet_hours_enabled: $("quiet_enabled").checked, quiet_start: $("quiet_start").value,
+      quiet_end: $("quiet_end").value, quiet_days: [...quietDays]}));
+    else if (t.id === "save") {
+      const body = {id: editing?.id, filename: $("dlg_title").dataset.file, kind, note: $("f_note").value,
+        enabled: editing ? editing.enabled : true};
+      if (kind === "once") Object.assign(body, {start: $("f_start").value, end: $("f_end").value});
+      else Object.assign(body, {days: [...formDays], start_time: $("f_start_time").value, end_time: $("f_end_time").value});
+      try { render(await api("/api/schedules", body)); $("dlg").close(); }
+      catch (err) { $("f_error").textContent = err.message; }
+    }
+  } catch (err) { alert(err.message); }
+});
+
+function tick() { $("clock").textContent = new Date().toLocaleString([], {weekday:"long", month:"short", day:"numeric", hour:"numeric", minute:"2-digit"}); }
+tick(); setInterval(tick, 10000);
+refresh(); setInterval(() => { if (!$("dlg").open) refresh(); }, 15000);
+</script>
+</body>
+</html>
